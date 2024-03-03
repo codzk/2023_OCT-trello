@@ -1,4 +1,5 @@
 from datetime import date
+import functools
 
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -13,13 +14,29 @@ from controllers.comment_controller import comments_bp
 cards_bp = Blueprint('cards', __name__, url_prefix='/cards')
 cards_bp.register_blueprint(comments_bp)
 
+def authorise_as_admin(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        user_id = get_jwt_identity()
+        stmt = db.select(User).filter_by(id=user_id)
+        user = db.session.scalar(stmt)
+        # if the user is an admin
+        if user.is_admin:
+            # we will continue and run the decorated function
+            return fn(*args, **kwargs)
+        # else (if the user is NOT an admin)
+        else:
+            return {"error": "Not authorised to delete a card"}, 403 
+        
+    return wrapper
+            # return an error 
+
 # http://localhost:8080/cards - GET
 @cards_bp.route('/')
 def get_all_cards():
     stmt = db.select(Card).order_by(Card.date.desc())
     cards = db.session.scalars(stmt)
     return cards_schema.dump(cards)
-
 
 # http://localhost:8080/cards/4 - GET
 @cards_bp.route('/<int:card_id>')
@@ -35,6 +52,7 @@ def get_one_card(card_id): # card_id = 4
 # http://localhost:8080/cards - POST
 @cards_bp.route('/', methods=["POST"])
 @jwt_required()
+@authorise_as_admin
 def create_card():
     body_data = card_schema.load(request.get_json())
     # Create a new card model instance
@@ -55,12 +73,13 @@ def create_card():
 # https://localhost:8080/cards/6 - DELETE
 @cards_bp.route('/<int:card_id>', methods=["DELETE"])
 @jwt_required()
+@authorise_as_admin
 def delete_card(card_id):
     # check user's admin status
-    is_admin = is_user_admin()
-    if not is_admin:
-        return {"error": "Not authorised to delete a card"}, 403
-    # get the card from the db with id = card_id
+    # is_admin = is_user_admin()
+    # if not is_admin:
+    #     return {"error": "Not authorised to delete a card"}, 403
+    # # get the card from the db with id = card_id
     stmt = db.select(Card).where(Card.id == card_id)
     card = db.session.scalar(stmt)
     # if card exists
@@ -78,6 +97,7 @@ def delete_card(card_id):
 # http://localhost:8080/cards/5 - PUT, PATCH
 @cards_bp.route('/<int:card_id>', methods=["PUT", "PATCH"])
 @jwt_required()
+@authorise_as_admin
 def update_card(card_id):
     # Get the data to be updated from the body of the request
     body_data = card_schema.load(request.get_json(), partial=True)
@@ -102,9 +122,10 @@ def update_card(card_id):
         # return error msg
         return {'error': f'Card with id {card_id} not found'}, 404
     
-
+# This function has been replaced by the authorise_as_admin decorator
 def is_user_admin():
         user_id = get_jwt_identity()
         stmt = db.select(User).filter_by(id=user_id)
         user = db.session.scalar(stmt)
         return user.is_admin
+
